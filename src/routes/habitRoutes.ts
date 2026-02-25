@@ -9,6 +9,7 @@ import {
 } from "../controllers/habitController";
 import { validate } from "../middleware/validate";
 import { authenticate } from "../middleware/auth";
+import { writeLimiter } from "../middleware/rateLimiter";
 import { createHabitSchema, updateHabitSchema } from "../schemas/habit.schema";
 
 const router = Router();
@@ -21,7 +22,7 @@ router.put("/:id", validate(updateHabitSchema), updateHabit);
 router.delete("/:id", deleteHabit);
 
 // Habit logging
-router.post("/:id/log", logHabit);
-router.delete("/:id/log/:date", unlogHabit);
+router.post("/:id/log", writeLimiter, logHabit);
+router.delete("/:id/log/:date", writeLimiter, unlogHabit);
 
 export default router;

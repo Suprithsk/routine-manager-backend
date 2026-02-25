@@ -11,6 +11,7 @@ import {
 } from "../controllers/habitController";
 import { validate } from "../middleware/validate";
 import { authenticate } from "../middleware/auth";
+import { writeLimiter } from "../middleware/rateLimiter";
 import { joinChallengeSchema } from "../schemas/userChallenge.schema";
 import { createHabitSchema } from "../schemas/habit.schema";
 
@@ -25,6 +26,6 @@ router.get("/:userChallengeId", getMyChallengeProgress);
 
 // Habit routes scoped to a specific enrollment
 router.get("/:userChallengeId/habits", getHabits);
-router.post("/:userChallengeId/habits", validate(createHabitSchema), createHabit);
+router.post("/:userChallengeId/habits", writeLimiter, validate(createHabitSchema), createHabit);
 
 export default router;

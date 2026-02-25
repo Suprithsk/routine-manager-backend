@@ -13,6 +13,7 @@ import {
 } from "../controllers/userChallengeController";
 import { validate } from "../middleware/validate";
 import { authenticate, adminOnly } from "../middleware/auth";
+import { writeLimiter } from "../middleware/rateLimiter";
 import {
   createChallengeSchema,
   updateChallengeSchema,
@@ -26,7 +27,7 @@ router.get("/", getAllChallenges);
 router.get("/:id", getChallengeById);
 
 // User routes (authenticated)
-router.post("/:id/join", authenticate, validate(joinChallengeSchema), joinChallenge);
+router.post("/:id/join", authenticate, writeLimiter, validate(joinChallengeSchema), joinChallenge);
 router.delete("/:id/leave", authenticate, leaveChallenge);
 
 // Admin-only routes
