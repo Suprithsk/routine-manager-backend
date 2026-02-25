@@ -5,6 +5,7 @@ import UserChallenge from "../models/UserChallenge";
 import Challenge from "../models/Challenge";
 import { AuthRequest } from "../middleware/auth";
 import { CreateHabitInput, UpdateHabitInput } from "../schemas/habit.schema";
+import { startOfDayInTZ, todayInTZ, tomorrowInTZ, DEFAULT_TIMEZONE } from "../utils/timezone";
 
 // POST /api/my-challenges/:userChallengeId/habits - Create habit in an enrollment
 export const createHabit = async (req: AuthRequest, res: Response) => {
@@ -79,11 +80,10 @@ export const getHabits = async (req: AuthRequest, res: Response) => {
     const habits = await Habit.find({ user_id: userId, userChallenge_id: userChallengeId })
       .sort({ createdAt: 1 });
 
-    // Get today's completion status
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    // Get today's completion status using the user's timezone
+    const tz = req.user!.timezone || DEFAULT_TIMEZONE;
+    const today = todayInTZ(tz);
+    const tomorrow = tomorrowInTZ(tz);
 
     const todayLogs = await HabitLog.find({
       habit_id: { $in: habits.map(h => h._id) },
@@ -218,15 +218,13 @@ export const logHabit = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: "Associated challenge not found" });
     }
 
-    // Parse date or use today
-    const logDate = date ? new Date(date) : new Date();
-    logDate.setHours(12, 0, 0, 0); // Normalize to noon to avoid timezone issues
+    // Parse date or use today — anchor to start-of-day in user's timezone
+    const tz = req.user!.timezone || DEFAULT_TIMEZONE;
+    const logDate = startOfDayInTZ(tz, date ? new Date(date) : new Date());
 
     // Check if already logged
-    const startOfDay = new Date(logDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(logDate);
-    endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = logDate;
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000 - 1);
 
     const existingLog = await HabitLog.findOne({
       habit_id: habitId,
@@ -267,8 +265,7 @@ export const logHabit = async (req: AuthRequest, res: Response) => {
 
       // Guard: if this exact calendar day was already counted as complete, skip progress update
       if (lastCompleted) {
-        const lastDay = new Date(lastCompleted);
-        lastDay.setHours(0, 0, 0, 0);
+        const lastDay = startOfDayInTZ(tz, new Date(lastCompleted));
         if (lastDay.getTime() === startOfDay.getTime()) {
           // Day already counted — just return the log without touching progress
           return res.status(201).json({
@@ -288,8 +285,7 @@ export const logHabit = async (req: AuthRequest, res: Response) => {
 
       // Use absolute computation (consistent with getMyChallengeProgress) to avoid double-counting
       const DAY_MS = 1000 * 60 * 60 * 24;
-      const startDay = new Date(userChallenge.startDate);
-      startDay.setHours(0, 0, 0, 0);
+      const startDay = startOfDayInTZ(tz, userChallenge.startDate);
       const daysElapsed = Math.floor((startOfDay.getTime() - startDay.getTime()) / DAY_MS);
 
       const newCompletedDays = userChallenge.progress.completedDays + 1;

@@ -5,6 +5,7 @@ import Habit from "../models/Habit";
 import HabitLog from "../models/HabitLog";
 import { AuthRequest } from "../middleware/auth";
 import { JoinChallengeInput } from "../schemas/userChallenge.schema";
+import { startOfDayInTZ, todayInTZ, tomorrowInTZ, DEFAULT_TIMEZONE } from "../utils/timezone";
 
 // POST /api/challenges/:id/join - Join a challenge
 export const joinChallenge = async (req: AuthRequest, res: Response) => {
@@ -163,12 +164,11 @@ export const getMyChallengeProgress = async (req: AuthRequest, res: Response) =>
 
     // ── Detect and persist pending missed days (idempotent) ────────────────
     if (userChallenge.status === "active") {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const tz = req.user!.timezone || DEFAULT_TIMEZONE;
+      const today = todayInTZ(tz);
 
       const DAY_MS = 1000 * 60 * 60 * 24;
-      const startDay = new Date(userChallenge.startDate);
-      startDay.setHours(0, 0, 0, 0);
+      const startDay = startOfDayInTZ(tz, userChallenge.startDate);
 
       // Total full days elapsed since start (today excluded — not yet over)
       const daysElapsed = Math.floor((today.getTime() - startDay.getTime()) / DAY_MS);
@@ -178,8 +178,7 @@ export const getMyChallengeProgress = async (req: AuthRequest, res: Response) =>
       const lastCompleted = userChallenge.progress.lastCompletedDate;
       let completedDaysForPast = userChallenge.progress.completedDays;
       if (lastCompleted) {
-        const lastDay = new Date(lastCompleted);
-        lastDay.setHours(0, 0, 0, 0);
+        const lastDay = startOfDayInTZ(tz, new Date(lastCompleted));
         if (lastDay.getTime() === today.getTime()) {
           completedDaysForPast -= 1;
         }
@@ -215,14 +214,13 @@ export const getMyChallengeProgress = async (req: AuthRequest, res: Response) =>
     // Get user's habits for this specific enrollment
     const habits = await Habit.find({ user_id: userId, userChallenge_id: userChallenge._id });
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tz2 = req.user!.timezone || DEFAULT_TIMEZONE;
+    const today2 = todayInTZ(tz2);
+    const tomorrow2 = tomorrowInTZ(tz2);
 
     const todayLogs = await HabitLog.find({
       habit_id: { $in: habits.map(h => h._id) },
-      dateCompleted: { $gte: today, $lt: tomorrow },
+      dateCompleted: { $gte: today2, $lt: tomorrow2 },
     });
 
     const habitsWithStatus = habits.map(habit => ({

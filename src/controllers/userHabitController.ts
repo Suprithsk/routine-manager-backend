@@ -6,18 +6,21 @@ import {
   CreateUserHabitInput,
   UpdateUserHabitInput,
 } from "../schemas/userHabit.schema";
+import {
+  toDay,
+  todayInTZ,
+  tomorrowInTZ,
+  startOfDayInTZ,
+  DEFAULT_TIMEZONE,
+} from "../utils/timezone";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Strip time from a Date to midnight UTC */
-function toDay(d: Date): Date {
-  const copy = new Date(d);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
-}
-
-/** Compute streak info from a sorted (asc) list of completion dates */
-function computeStreaks(dates: Date[]): {
+/** Compute streak info from a sorted (asc) list of completion dates, relative to `tz` */
+function computeStreaks(
+  dates: Date[],
+  tz: string
+): {
   currentStreak: number;
   longestStreak: number;
   lastCompletedDate: Date | null;
@@ -47,11 +50,8 @@ function computeStreaks(dates: Date[]): {
     }
   }
 
-  // Current streak: count backwards from today
-  const today = toDay(new Date());
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-
+  // Current streak: count backwards from today (in user's timezone)
+  const today = todayInTZ(tz);
   const lastDay = days[days.length - 1];
   const lastCompletedDate = lastDay;
 
@@ -133,9 +133,9 @@ export const getUserHabitById = async (req: AuthRequest, res: Response) => {
     const habit = await UserHabit.findOne({ _id: id, user_id: userId });
     if (!habit) return res.status(404).json({ error: "Habit not found" });
 
-    const today = toDay(new Date());
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tz = req.user!.timezone || DEFAULT_TIMEZONE;
+    const today = todayInTZ(tz);
+    const tomorrow = tomorrowInTZ(tz);
 
     const completedToday = !!(await UserHabitLog.findOne({
       userHabit_id: id,
@@ -241,12 +241,10 @@ export const logUserHabit = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: "Cannot log an archived habit" });
     }
 
-    const logDate = date ? new Date(date) : new Date();
-    logDate.setHours(12, 0, 0, 0);
+    const logDate = startOfDayInTZ(req.user!.timezone || DEFAULT_TIMEZONE, date ? new Date(date) : new Date());
 
-    const startOfDay = toDay(logDate);
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = logDate;
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000 - 1);
 
     const existing = await UserHabitLog.findOne({
       userHabit_id: id,
@@ -273,14 +271,14 @@ export const unlogUserHabit = async (req: AuthRequest, res: Response) => {
   try {
     const { id, date } = req.params;
     const userId = req.user!._id;
+    const tz = req.user!.timezone || DEFAULT_TIMEZONE;
 
     const habit = await UserHabit.findOne({ _id: id, user_id: userId });
     if (!habit) return res.status(404).json({ error: "Habit not found" });
 
     const logDate = new Date(date);
-    const startOfDay = toDay(logDate);
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = startOfDayInTZ(tz, logDate);
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000 - 1);
 
     const deleted = await UserHabitLog.findOneAndDelete({
       userHabit_id: id,
@@ -309,33 +307,31 @@ export const getUserHabitAnalytics = async (req: AuthRequest, res: Response) => 
     const allLogs = await UserHabitLog.find({ userHabit_id: id }).sort({ dateCompleted: 1 });
     const dates = allLogs.map((l) => l.dateCompleted);
 
-    const { currentStreak, longestStreak, lastCompletedDate } = computeStreaks(dates);
+    const { currentStreak, longestStreak, lastCompletedDate } = computeStreaks(dates, req.user!.timezone || DEFAULT_TIMEZONE);
 
     const totalCompletions = dates.length;
 
-    // Completion rate — last 30 calendar days (excluding today if not yet logged)
-    const today = toDay(new Date());
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
+    // Completion rate — last 30 calendar days
+    const tz = req.user!.timezone || DEFAULT_TIMEZONE;
+    const today = todayInTZ(tz);
+    const thirtyDaysAgo = new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000);
 
     const last30Logs = dates.filter((d) => toDay(d) >= thirtyDaysAgo).length;
     const completionRateLast30 = Math.round((last30Logs / 30) * 100);
 
     // Completion rate — last 7 days
-    const sevenDaysAgo = new Date(today);
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    const sevenDaysAgo = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
     const last7Logs = dates.filter((d) => toDay(d) >= sevenDaysAgo).length;
     const completionRateLast7 = Math.round((last7Logs / 7) * 100);
 
     // Check completed today
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrow = tomorrowInTZ(tz);
     const completedToday = dates.some(
       (d) => toDay(d) >= today && toDay(d) < tomorrow
     );
 
     // Weekly breakdown — past 4 weeks (Mon–Sun)
-    const weeklyBreakdown = buildWeeklyBreakdown(dates, 4);
+    const weeklyBreakdown = buildWeeklyBreakdown(dates, 4, tz);
 
     // Monthly breakdown — past 6 months
     const monthlyBreakdown = buildMonthlyBreakdown(dates, 6);
@@ -364,12 +360,12 @@ export const getUserHabitAnalytics = async (req: AuthRequest, res: Response) => 
 export const getUserHabitsSummary = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!._id;
+    const tz = req.user!.timezone || DEFAULT_TIMEZONE;
 
     const habits = await UserHabit.find({ user_id: userId, isArchived: false });
 
-    const today = toDay(new Date());
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const today = todayInTZ(tz);
+    const tomorrow = tomorrowInTZ(tz);
 
     const summaries = await Promise.all(
       habits.map(async (habit) => {
@@ -378,7 +374,7 @@ export const getUserHabitsSummary = async (req: AuthRequest, res: Response) => {
         }).sort({ dateCompleted: 1 });
 
         const dates = allLogs.map((l) => l.dateCompleted);
-        const { currentStreak, longestStreak, lastCompletedDate } = computeStreaks(dates);
+        const { currentStreak, longestStreak, lastCompletedDate } = computeStreaks(dates, tz);
 
         const completedToday = dates.some(
           (d) => toDay(d) >= today && toDay(d) < tomorrow
@@ -421,16 +417,16 @@ function formatHabit(habit: any) {
   };
 }
 
-function buildWeeklyBreakdown(dates: Date[], weeks: number) {
+function buildWeeklyBreakdown(dates: Date[], weeks: number, tz: string) {
   const result = [];
-  const today = toDay(new Date());
+  const today = todayInTZ(tz);
 
   for (let w = weeks - 1; w >= 0; w--) {
     const weekStart = new Date(today);
-    weekStart.setDate(today.getDate() - today.getDay() - w * 7); // Sunday
+    weekStart.setUTCDate(today.getUTCDate() - today.getUTCDay() - w * 7); // Sunday start
     const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-    weekEnd.setHours(23, 59, 59, 999);
+    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
+    weekEnd.setTime(weekEnd.getTime() + 24 * 60 * 60 * 1000 - 1);
 
     const completed = dates.filter(
       (d) => toDay(d) >= weekStart && d <= weekEnd

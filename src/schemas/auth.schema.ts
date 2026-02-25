@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { isValidTimezone, DEFAULT_TIMEZONE } from "../utils/timezone";
+
+const timezoneField = z
+  .string()
+  .refine(isValidTimezone, { message: "Invalid IANA timezone (e.g. 'Asia/Kolkata', 'America/New_York')" })
+  .default(DEFAULT_TIMEZONE);
 
 export const registerSchema = z.object({
   name: z
@@ -12,6 +18,7 @@ export const registerSchema = z.object({
     .string()
     .min(6, "Password must be at least 6 characters")
     .max(100, "Password must be less than 100 characters"),
+  timezone: timezoneField.optional(),
 });
 
 // Admin can create users with roles
@@ -52,6 +59,7 @@ export const updateProfileSchema = z.object({
     .string()
     .url("Invalid avatar URL")
     .optional(),
+  timezone: timezoneField.optional(),
 });
 
 export const changePasswordSchema = z.object({
@@ -71,8 +79,8 @@ export const changePasswordSchema = z.object({
 });
 
 // Type exports
-export type RegisterInput = z.infer<typeof registerSchema>;
+export type RegisterInput = z.infer<typeof registerSchema> & { timezone?: string };
 export type AdminCreateUserInput = z.infer<typeof adminCreateUserSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
-export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema> & { timezone?: string };
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;

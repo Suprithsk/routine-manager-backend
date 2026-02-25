@@ -9,6 +9,7 @@ export interface IUser extends Document {
   password: string;
   role: UserRole;
   avatar?: string;
+  timezone: string;
   createdAt: Date;
 }
 
@@ -18,6 +19,7 @@ const userSchema = new Schema<IUser>({
   password: { type: String, required: true },
   role: { type: String, enum: ["user", "admin"], default: "user" },
   avatar: String,
+  timezone: { type: String, default: "Asia/Kolkata" },
   createdAt: { type: Date, default: Date.now }
 });
 

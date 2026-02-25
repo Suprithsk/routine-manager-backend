@@ -12,7 +12,7 @@ import {
 // POST /api/auth/register
 export const register = async (req: Request, res: Response) => {
   try {
-    const { name, email, password } = req.body as RegisterInput;
+    const { name, email, password, timezone } = req.body as RegisterInput;
 
     if (email === process.env.ADMIN_EMAIL) {
       return res.status(403).json({ error: "This email is reserved!" });
@@ -33,6 +33,7 @@ export const register = async (req: Request, res: Response) => {
       email,
       password: hashedPassword,
       role: "user",
+      timezone: timezone ?? "Asia/Kolkata",
     });
 
     // Generate token
@@ -46,6 +47,7 @@ export const register = async (req: Request, res: Response) => {
         email: user.email,
         role: user.role,
         avatar: user.avatar,
+        timezone: user.timezone,
         createdAt: user.createdAt,
       },
       token,
@@ -84,6 +86,7 @@ export const login = async (req: Request, res: Response) => {
         email: user.email,
         role: user.role,
         avatar: user.avatar,
+        timezone: user.timezone,
         createdAt: user.createdAt,
       },
       token,
@@ -106,6 +109,7 @@ export const getMe = async (req: AuthRequest, res: Response) => {
         email: user.email,
         role: user.role,
         avatar: user.avatar,
+        timezone: user.timezone,
         createdAt: user.createdAt,
       },
     });
@@ -118,12 +122,13 @@ export const getMe = async (req: AuthRequest, res: Response) => {
 // PUT /api/auth/me
 export const updateProfile = async (req: AuthRequest, res: Response) => {
   try {
-    const { name, avatar } = req.body as UpdateProfileInput;
+    const { name, avatar, timezone } = req.body as UpdateProfileInput;
     const userId = req.user!._id;
 
-    const updateData: Partial<{ name: string; avatar: string }> = {};
+    const updateData: Partial<{ name: string; avatar: string; timezone: string }> = {};
     if (name) updateData.name = name;
     if (avatar) updateData.avatar = avatar;
+    if (timezone) updateData.timezone = timezone;
 
     const user = await User.findByIdAndUpdate(
       userId,
@@ -143,6 +148,7 @@ export const updateProfile = async (req: AuthRequest, res: Response) => {
         email: user.email,
         role: user.role,
         avatar: user.avatar,
+        timezone: user.timezone,
         createdAt: user.createdAt,
       },
     });
