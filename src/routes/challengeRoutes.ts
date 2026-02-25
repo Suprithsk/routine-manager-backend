@@ -11,10 +11,6 @@ import {
   joinChallenge,
   leaveChallenge,
 } from "../controllers/userChallengeController";
-import {
-  createHabit,
-  getHabits,
-} from "../controllers/habitController";
 import { validate } from "../middleware/validate";
 import { authenticate, adminOnly } from "../middleware/auth";
 import {
@@ -22,7 +18,6 @@ import {
   updateChallengeSchema,
 } from "../schemas/challenge.schema";
 import { joinChallengeSchema } from "../schemas/userChallenge.schema";
-import { createHabitSchema } from "../schemas/habit.schema";
 
 const router = Router();
 
@@ -33,8 +28,6 @@ router.get("/:id", getChallengeById);
 // User routes (authenticated)
 router.post("/:id/join", authenticate, validate(joinChallengeSchema), joinChallenge);
 router.delete("/:id/leave", authenticate, leaveChallenge);
-router.get("/:challengeId/habits", authenticate, getHabits);
-router.post("/:challengeId/habits", authenticate, validate(createHabitSchema), createHabit);
 
 // Admin-only routes
 router.post("/", authenticate, adminOnly, validate(createChallengeSchema), createChallenge);

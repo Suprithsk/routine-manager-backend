@@ -10,7 +10,32 @@ import {
 // GET /api/challenges - List all challenges (Public)
 export const getAllChallenges = async (req: Request, res: Response) => {
   try {
-    const challenges = await Challenge.find().sort({ createdAt: -1 });
+    const { search, sortBy } = req.query;
+
+    // Build query for search
+    let query: any = {};
+    if (search && typeof search === 'string') {
+      query = {
+        $or: [
+          { title: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } }
+        ]
+      };
+    }
+
+    // Build sort options
+    let sortOptions: any = { createdAt: -1 }; // Default: newest first
+    if (sortBy === 'durationAsc') {
+      sortOptions = { durationDays: 1 };
+    } else if (sortBy === 'durationDesc') {
+      sortOptions = { durationDays: -1 };
+    } else if (sortBy === 'titleAsc') {
+      sortOptions = { title: 1 };
+    } else if (sortBy === 'titleDesc') {
+      sortOptions = { title: -1 };
+    }
+
+    const challenges = await Challenge.find(query).sort(sortOptions);
 
     res.json({
       challenges: challenges.map((challenge) => ({

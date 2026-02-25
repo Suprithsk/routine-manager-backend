@@ -3,15 +3,22 @@ import authRoutes from "./routes/authRoutes";
 import challengeRoutes from "./routes/challengeRoutes";
 import userChallengeRoutes from "./routes/userChallengeRoutes";
 import habitRoutes from "./routes/habitRoutes";
+import userHabitRoutes from "./routes/userHabitRoutes";
+import userRoutes from "./routes/userRoutes";
+import cors from "cors";
+
+// Middleware
 
 const app = express();
 app.use(express.json());
-
+app.use(cors());
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/challenges", challengeRoutes);
 app.use("/api/my-challenges", userChallengeRoutes);
 app.use("/api/habits", habitRoutes);
+app.use("/api/user-habits", userHabitRoutes);
+app.use("/api/users", userRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

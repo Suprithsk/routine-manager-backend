@@ -6,15 +6,15 @@ import Challenge from "../models/Challenge";
 import { AuthRequest } from "../middleware/auth";
 import { CreateHabitInput, UpdateHabitInput } from "../schemas/habit.schema";
 
-// POST /api/challenges/:challengeId/habits - Create habit in a challenge
+// POST /api/my-challenges/:userChallengeId/habits - Create habit in an enrollment
 export const createHabit = async (req: AuthRequest, res: Response) => {
   try {
-    const { challengeId } = req.params;
+    const { userChallengeId } = req.params;
     const userId = req.user!._id;
     const { title } = req.body as CreateHabitInput;
 
-    // Check if user is enrolled in this challenge
-    const userChallenge = await UserChallenge.findOne({ userId, challengeId });
+    // Look up enrollment by its own ID, scoped to the current user
+    const userChallenge = await UserChallenge.findOne({ _id: userChallengeId, userId });
     if (!userChallenge) {
       return res.status(403).json({ error: "You must join the challenge first" });
     }
@@ -23,10 +23,17 @@ export const createHabit = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: "Cannot add habits to a completed or failed challenge" });
     }
 
-    // Check for duplicate habit title
+    // Block adding habits once the challenge has started — days already counted would become invalid
+    if (userChallenge.progress.completedDays > 0) {
+      return res.status(400).json({
+        error: "Cannot add habits after the challenge has already started. You have completed days recorded.",
+      });
+    }
+
+    // Check for duplicate habit title within this specific enrollment
     const existingHabit = await Habit.findOne({
       user_id: userId,
-      challenge_id: challengeId,
+      userChallenge_id: userChallengeId,
       title: { $regex: new RegExp(`^${title}$`, "i") },
     });
 
@@ -36,7 +43,8 @@ export const createHabit = async (req: AuthRequest, res: Response) => {
 
     const habit = await Habit.create({
       user_id: userId,
-      challenge_id: challengeId,
+      challenge_id: userChallenge.challengeId,
+      userChallenge_id: userChallengeId,
       title,
     });
 
@@ -46,6 +54,7 @@ export const createHabit = async (req: AuthRequest, res: Response) => {
         id: habit._id,
         title: habit.title,
         challengeId: habit.challenge_id,
+        userChallengeId: habit.userChallenge_id,
         createdAt: habit.createdAt,
       },
     });
@@ -55,19 +64,19 @@ export const createHabit = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// GET /api/challenges/:challengeId/habits - Get user's habits in a challenge
+// GET /api/my-challenges/:userChallengeId/habits - Get user's habits in a specific enrollment
 export const getHabits = async (req: AuthRequest, res: Response) => {
   try {
-    const { challengeId } = req.params;
+    const { userChallengeId } = req.params;
     const userId = req.user!._id;
 
-    // Check if user is enrolled
-    const userChallenge = await UserChallenge.findOne({ userId, challengeId });
+    // Look up enrollment by its own ID, scoped to the current user
+    const userChallenge = await UserChallenge.findOne({ _id: userChallengeId, userId });
     if (!userChallenge) {
       return res.status(403).json({ error: "You must join the challenge first" });
     }
 
-    const habits = await Habit.find({ user_id: userId, challenge_id: challengeId })
+    const habits = await Habit.find({ user_id: userId, userChallenge_id: userChallengeId })
       .sort({ createdAt: 1 });
 
     // Get today's completion status
@@ -115,7 +124,7 @@ export const updateHabit = async (req: AuthRequest, res: Response) => {
     if (title && title !== habit.title) {
       const existingHabit = await Habit.findOne({
         user_id: userId,
-        challenge_id: habit.challenge_id,
+        userChallenge_id: habit.userChallenge_id,
         title: { $regex: new RegExp(`^${title}$`, "i") },
         _id: { $ne: id },
       });
@@ -190,6 +199,25 @@ export const logHabit = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: "Not authorized to log this habit" });
     }
 
+    // Get user challenge via the habit's enrollment reference
+    const userChallenge = await UserChallenge.findById(habit.userChallenge_id);
+
+    if (!userChallenge) {
+      return res.status(403).json({ error: "You must join the challenge first" });
+    }
+
+    if (userChallenge.status !== "active") {
+      return res.status(400).json({ 
+        error: "Cannot log habits for a completed or failed challenge",
+        status: userChallenge.status
+      });
+    }
+
+    const challenge = await Challenge.findById(habit.challenge_id);
+    if (!challenge) {
+      return res.status(404).json({ error: "Associated challenge not found" });
+    }
+
     // Parse date or use today
     const logDate = date ? new Date(date) : new Date();
     logDate.setHours(12, 0, 0, 0); // Normalize to noon to avoid timezone issues
@@ -218,7 +246,7 @@ export const logHabit = async (req: AuthRequest, res: Response) => {
     // Check if all habits completed for the day
     const userHabits = await Habit.find({
       user_id: userId,
-      challenge_id: habit.challenge_id,
+      userChallenge_id: habit.userChallenge_id,
     });
 
     const habitIds = userHabits.map(h => h._id);
@@ -231,48 +259,78 @@ export const logHabit = async (req: AuthRequest, res: Response) => {
 
     // Update user challenge progress if all habits completed
     let challengeCompleted = false;
+    let challengeFailed = false;
+    let livesRemaining = userChallenge.livesRemaining;
+
     if (allHabitsCompleted) {
-      const userChallenge = await UserChallenge.findOne({
-        userId,
-        challengeId: habit.challenge_id,
-      });
+      const lastCompleted = userChallenge.progress.lastCompletedDate;
 
-      if (userChallenge) {
-        const challenge = await Challenge.findById(habit.challenge_id);
-        const lastCompleted = userChallenge.progress.lastCompletedDate;
-        const dateStr = logDate.toISOString().slice(0, 10);
-        const lastStr = lastCompleted?.toISOString().slice(0, 10);
-
-        // Only increment if this is a new day
-        if (lastStr !== dateStr) {
-          let newStreak = 1;
-          if (lastCompleted) {
-            const diffDays = Math.floor(
-              (logDate.getTime() - lastCompleted.getTime()) / (1000 * 60 * 60 * 24)
-            );
-            if (diffDays === 1) {
-              newStreak = userChallenge.progress.currentStreak + 1;
-            }
-          }
-
-          const newCompletedDays = userChallenge.progress.completedDays + 1;
-          challengeCompleted = challenge ? newCompletedDays >= challenge.durationDays : false;
-
-          await UserChallenge.findByIdAndUpdate(userChallenge._id, {
-            "progress.completedDays": newCompletedDays,
-            "progress.currentStreak": newStreak,
-            "progress.lastCompletedDate": logDate,
-            ...(challengeCompleted && {
-              status: "completed",
-              completedOn: new Date(),
-            }),
+      // Guard: if this exact calendar day was already counted as complete, skip progress update
+      if (lastCompleted) {
+        const lastDay = new Date(lastCompleted);
+        lastDay.setHours(0, 0, 0, 0);
+        if (lastDay.getTime() === startOfDay.getTime()) {
+          // Day already counted — just return the log without touching progress
+          return res.status(201).json({
+            message: "Habit logged successfully",
+            log: {
+              id: habitLog._id,
+              habitId: habitLog.habit_id,
+              dateCompleted: habitLog.dateCompleted,
+            },
+            dayCompleted: true,
+            challengeCompleted: false,
+            challengeFailed: false,
+            livesRemaining: userChallenge.livesRemaining,
           });
         }
       }
+
+      // Use absolute computation (consistent with getMyChallengeProgress) to avoid double-counting
+      const DAY_MS = 1000 * 60 * 60 * 24;
+      const startDay = new Date(userChallenge.startDate);
+      startDay.setHours(0, 0, 0, 0);
+      const daysElapsed = Math.floor((startOfDay.getTime() - startDay.getTime()) / DAY_MS);
+
+      const newCompletedDays = userChallenge.progress.completedDays + 1;
+      const totalMissedDays = Math.max(0, daysElapsed - newCompletedDays + 1);
+      const totalLivesRemaining = Math.max(0, 5 - totalMissedDays);
+
+      // Streak always increments on each completed day — missed days cost lives, not streak
+      const newStreak = userChallenge.progress.currentStreak + 1;
+
+      challengeFailed = totalLivesRemaining <= 0;
+      if (newStreak >= challenge.durationDays && !challengeFailed) {
+        challengeCompleted = true;
+      }
+
+      livesRemaining = totalLivesRemaining;
+
+      const updateData: any = {
+        "progress.completedDays": newCompletedDays,
+        "progress.currentStreak": newStreak,
+        "progress.lastCompletedDate": logDate,
+        livesRemaining: totalLivesRemaining,
+        missedDays: totalMissedDays,
+      };
+
+      if (challengeCompleted) {
+        updateData.status = "completed";
+        updateData.completedOn = new Date();
+      } else if (challengeFailed) {
+        updateData.status = "failed";
+        updateData.completedOn = new Date();
+      }
+
+      await UserChallenge.findByIdAndUpdate(userChallenge._id, updateData);
     }
 
     res.status(201).json({
-      message: "Habit logged successfully",
+      message: challengeFailed 
+        ? "Challenge failed - no lives remaining" 
+        : challengeCompleted 
+        ? `Challenge completed - ${challenge.durationDays} day streak achieved!` 
+        : "Habit logged successfully",
       log: {
         id: habitLog._id,
         habitId: habitLog.habit_id,
@@ -280,12 +338,16 @@ export const logHabit = async (req: AuthRequest, res: Response) => {
       },
       dayCompleted: allHabitsCompleted,
       challengeCompleted,
+      challengeFailed,
+      livesRemaining,
     });
   } catch (error) {
     console.error("LogHabit error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 };
+
+
 
 // DELETE /api/habits/:id/log/:date - Unmark habit for a date
 export const unlogHabit = async (req: AuthRequest, res: Response) => {

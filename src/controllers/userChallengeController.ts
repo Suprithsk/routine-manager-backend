@@ -21,18 +21,20 @@ export const joinChallenge = async (req: AuthRequest, res: Response) => {
 
     // Check if already enrolled
     const existingEnrollment = await UserChallenge.findOne({ userId, challengeId });
-    if (existingEnrollment) {
+    if (existingEnrollment && existingEnrollment.status !== "failed" && existingEnrollment.status !== "completed") {
       return res.status(409).json({ 
         error: "Already enrolled in this challenge",
         userChallenge: {
           id: existingEnrollment._id,
           status: existingEnrollment.status,
           progress: existingEnrollment.progress,
+          livesRemaining: existingEnrollment.livesRemaining,
+          missedDays: existingEnrollment.missedDays,
         }
       });
     }
 
-    // Create enrollment
+    // Create enrollment with 5 lives
     const userChallenge = await UserChallenge.create({
       userId,
       challengeId,
@@ -42,6 +44,8 @@ export const joinChallenge = async (req: AuthRequest, res: Response) => {
         completedDays: 0,
         currentStreak: 0,
       },
+      livesRemaining: 5,
+      missedDays: 0,
     });
 
     res.status(201).json({
@@ -52,6 +56,8 @@ export const joinChallenge = async (req: AuthRequest, res: Response) => {
         startDate: userChallenge.startDate,
         status: userChallenge.status,
         progress: userChallenge.progress,
+        livesRemaining: userChallenge.livesRemaining,
+        missedDays: userChallenge.missedDays,
         createdAt: userChallenge.createdAt,
       },
       challenge: {
@@ -78,13 +84,13 @@ export const leaveChallenge = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: "Not enrolled in this challenge" });
     }
 
-    // Delete user's habits for this challenge
-    await Habit.deleteMany({ user_id: userId, challenge_id: challengeId });
-
-    // Delete habit logs for user's habits in this challenge
-    const userHabits = await Habit.find({ user_id: userId, challenge_id: challengeId });
+    // Delete habit logs for user's habits in this enrollment
+    const userHabits = await Habit.find({ user_id: userId, userChallenge_id: userChallenge._id });
     const habitIds = userHabits.map(h => h._id);
     await HabitLog.deleteMany({ habit_id: { $in: habitIds } });
+
+    // Delete user's habits for this enrollment
+    await Habit.deleteMany({ userChallenge_id: userChallenge._id });
 
     // Delete enrollment
     await UserChallenge.findByIdAndDelete(userChallenge._id);
@@ -110,7 +116,7 @@ export const getMyChallenges = async (req: AuthRequest, res: Response) => {
         const challenge = uc.challengeId as any;
         const habitCount = await Habit.countDocuments({
           user_id: userId,
-          challenge_id: challenge._id,
+          userChallenge_id: uc._id,
         });
 
         return {
@@ -124,6 +130,8 @@ export const getMyChallenges = async (req: AuthRequest, res: Response) => {
           startDate: uc.startDate,
           status: uc.status,
           progress: uc.progress,
+          livesRemaining: uc.livesRemaining,
+          missedDays: uc.missedDays,
           habitCount,
           completedOn: uc.completedOn,
           createdAt: uc.createdAt,
@@ -138,13 +146,13 @@ export const getMyChallenges = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// GET /api/my-challenges/:challengeId - Get user's progress in a specific challenge
+// GET /api/my-challenges/:userChallengeId - Get user's progress in a specific enrollment
 export const getMyChallengeProgress = async (req: AuthRequest, res: Response) => {
   try {
-    const { challengeId } = req.params;
+    const { userChallengeId } = req.params;
     const userId = req.user!._id;
 
-    const userChallenge = await UserChallenge.findOne({ userId, challengeId })
+    let userChallenge = await UserChallenge.findOne({ _id: userChallengeId, userId })
       .populate("challengeId");
 
     if (!userChallenge) {
@@ -153,10 +161,60 @@ export const getMyChallengeProgress = async (req: AuthRequest, res: Response) =>
 
     const challenge = userChallenge.challengeId as any;
 
-    // Get user's habits for this challenge
-    const habits = await Habit.find({ user_id: userId, challenge_id: challengeId });
+    // ── Detect and persist pending missed days (idempotent) ────────────────
+    if (userChallenge.status === "active") {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-    // Get today's logs
+      const DAY_MS = 1000 * 60 * 60 * 24;
+      const startDay = new Date(userChallenge.startDate);
+      startDay.setHours(0, 0, 0, 0);
+
+      // Total full days elapsed since start (today excluded — not yet over)
+      const daysElapsed = Math.floor((today.getTime() - startDay.getTime()) / DAY_MS);
+
+      // missedDays = elapsed past days - completions that happened on past days
+      // If today was already completed, exclude it from completedDays since today hasn't elapsed yet
+      const lastCompleted = userChallenge.progress.lastCompletedDate;
+      let completedDaysForPast = userChallenge.progress.completedDays;
+      if (lastCompleted) {
+        const lastDay = new Date(lastCompleted);
+        lastDay.setHours(0, 0, 0, 0);
+        if (lastDay.getTime() === today.getTime()) {
+          completedDaysForPast -= 1;
+        }
+      }
+
+      const totalMissedDays = Math.max(0, daysElapsed - completedDaysForPast);
+      const totalLivesRemaining = Math.max(0, 5 - totalMissedDays);
+      const failed = totalLivesRemaining <= 0;
+
+      // Only write if something actually changed
+      if (
+        totalMissedDays !== userChallenge.missedDays ||
+        totalLivesRemaining !== userChallenge.livesRemaining ||
+        failed
+      ) {
+        const updateData: any = {
+          missedDays: totalMissedDays,
+          livesRemaining: totalLivesRemaining,
+        };
+        if (failed) {
+          updateData.status = "failed";
+          updateData.completedOn = new Date();
+        }
+        userChallenge = (await UserChallenge.findByIdAndUpdate(
+          userChallenge._id,
+          updateData,
+          { new: true }
+        ).populate("challengeId"))!;
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+    // Get user's habits for this specific enrollment
+    const habits = await Habit.find({ user_id: userId, userChallenge_id: userChallenge._id });
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -180,6 +238,8 @@ export const getMyChallengeProgress = async (req: AuthRequest, res: Response) =>
         startDate: userChallenge.startDate,
         status: userChallenge.status,
         progress: userChallenge.progress,
+        livesRemaining: userChallenge.livesRemaining,
+        missedDays: userChallenge.missedDays,
         completedOn: userChallenge.completedOn,
       },
       challenge: {

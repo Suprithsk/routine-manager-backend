@@ -13,6 +13,8 @@ export interface IUserChallenge extends Document {
     currentStreak: number;
     lastCompletedDate?: Date;
   };
+  livesRemaining: number;
+  missedDays: number;
   completedOn?: Date;
   createdAt: Date;
 }
@@ -27,10 +29,18 @@ const userChallengeSchema = new Schema<IUserChallenge>({
     currentStreak: { type: Number, default: 0 },
     lastCompletedDate: Date,
   },
+  livesRemaining: { type: Number, default: 5 },
+  missedDays: { type: Number, default: 0 },
   completedOn: Date,
   createdAt: { type: Date, default: Date.now },
 });
 
-userChallengeSchema.index({ userId: 1, challengeId: 1 }, { unique: true });
+userChallengeSchema.index(
+  { userId: 1, challengeId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: "active" },
+  }
+);
 
 export default model<IUserChallenge>("UserChallenge", userChallengeSchema);
