@@ -29,7 +29,7 @@ router.get("/analytics/summary", getUserHabitsSummary);
 
 // CRUD
 router.get("/", getUserHabits);
-router.post("/", writeLimiter, validate(createUserHabitSchema), createUserHabit);
+router.post("/", validate(createUserHabitSchema), createUserHabit);
 router.get("/:id", getUserHabitById);
 router.put("/:id", validate(updateUserHabitSchema), updateUserHabit);
 router.delete("/:id", deleteUserHabit);
