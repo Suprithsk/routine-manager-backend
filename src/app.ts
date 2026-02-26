@@ -6,19 +6,12 @@ import habitRoutes from "./routes/habitRoutes";
 import userHabitRoutes from "./routes/userHabitRoutes";
 import userRoutes from "./routes/userRoutes";
 import cors from "cors";
-import { generalLimiter } from "./middleware/rateLimiter";
 
 // Middleware
 
 const app = express();
-
-// Trust the first proxy hop so req.ip resolves to the real client IP
-// (required for rate limiting to work correctly behind Nginx, cloud LBs, etc.)
-app.set("trust proxy", 1);
-
 app.use(express.json());
 app.use(cors());
-app.use("/api", generalLimiter);
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/challenges", challengeRoutes);

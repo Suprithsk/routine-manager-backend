@@ -13,7 +13,6 @@ import {
 } from "../controllers/userHabitController";
 import { validate } from "../middleware/validate";
 import { authenticate } from "../middleware/auth";
-import { writeLimiter } from "../middleware/rateLimiter";
 import {
   createUserHabitSchema,
   updateUserHabitSchema,
@@ -36,8 +35,8 @@ router.delete("/:id", deleteUserHabit);
 router.patch("/:id/archive", archiveUserHabit);
 
 // Logging
-router.post("/:id/log", writeLimiter, validate(logUserHabitSchema), logUserHabit);
-router.delete("/:id/log/:date", writeLimiter, unlogUserHabit);
+router.post("/:id/log", validate(logUserHabitSchema), logUserHabit);
+router.delete("/:id/log/:date", unlogUserHabit);
 
 // Analytics per habit
 router.get("/:id/analytics", getUserHabitAnalytics);

@@ -9,7 +9,6 @@ import {
 } from "../controllers/authController";
 import { validate } from "../middleware/validate";
 import { authenticate, adminOnly } from "../middleware/auth";
-import { authLimiter } from "../middleware/rateLimiter";
 import {
   registerSchema,
   loginSchema,
@@ -20,9 +19,9 @@ import {
 
 const router = Router();
 
-// Public routes (auth limiter: 10 req / 15 min)
-router.post("/register", authLimiter, validate(registerSchema), register);
-router.post("/login", authLimiter, validate(loginSchema), login);
+// Public routes
+router.post("/register", validate(registerSchema), register);
+router.post("/login", validate(loginSchema), login);
 
 // Protected routes (any authenticated user)
 router.get("/me", authenticate, getMe);
