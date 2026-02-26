@@ -251,7 +251,10 @@ export const logUserHabit = async (req: AuthRequest, res: Response) => {
       dateCompleted: { $gte: startOfDay, $lte: endOfDay },
     });
     if (existing) {
-      return res.status(409).json({ error: "Habit already logged for this date" });
+      return res.status(409).json({
+        error: "Habit already logged for this date",
+        alreadyLoggedAt: existing.dateCompleted,
+      });
     }
 
     const log = await UserHabitLog.create({ userHabit_id: id, dateCompleted: logDate });

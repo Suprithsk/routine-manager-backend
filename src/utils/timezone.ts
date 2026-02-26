@@ -22,15 +22,17 @@ export function toLocalDateStr(date: Date, timezone: string): string {
  * Returns the UTC Date that corresponds to 00:00:00.000 in the user's timezone
  * on the calendar day that `date` falls in.
  *
- * Example — IST (UTC+5:30):
- *   date = 2026-02-26T00:25:00+05:30 => 2026-02-25T18:55:00Z
- *   returns  2026-02-25T18:30:00Z  (midnight IST on Feb 26, expressed in UTC)
+ * Uses noon UTC of that local date as the offset anchor — this is safe for all
+ * UTC±11 timezones and correctly handles DST transitions (offset is evaluated
+ * at the target day, not at the original UTC instant which may be a different day).
  */
 export function startOfDayInTZ(timezone: string, date: Date = new Date()): Date {
-  const localDateStr = toLocalDateStr(date, timezone);          // "2026-02-26"
-  const offsetMs     = getOffsetMs(timezone, date);             // +19800000 for IST
-  const midnightUTC  = new Date(localDateStr + "T00:00:00.000Z"); // treat local date as UTC first
-  return new Date(midnightUTC.getTime() - offsetMs);            // shift back by offset
+  const localDateStr = toLocalDateStr(date, timezone);          // e.g. "2026-02-26"
+  // Noon UTC of that local date — safely within the same calendar day for all zones
+  const noonAnchor  = new Date(localDateStr + "T12:00:00.000Z");
+  const offsetMs    = getOffsetMs(timezone, noonAnchor);        // offset at the target day
+  const midnightUTC = new Date(localDateStr + "T00:00:00.000Z");
+  return new Date(midnightUTC.getTime() - offsetMs);
 }
 
 /** Returns the UTC Date for 23:59:59.999 in the user's timezone on the same calendar day. */

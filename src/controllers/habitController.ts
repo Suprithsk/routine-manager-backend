@@ -232,7 +232,10 @@ export const logHabit = async (req: AuthRequest, res: Response) => {
     });
 
     if (existingLog) {
-      return res.status(409).json({ error: "Habit already logged for this date" });
+      return res.status(409).json({
+        error: "Habit already logged for this date",
+        alreadyLoggedAt: existingLog.dateCompleted,
+      });
     }
 
     // Create log
