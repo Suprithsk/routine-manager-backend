@@ -7,7 +7,7 @@ import {
   UpdateUserHabitInput,
 } from "../schemas/userHabit.schema";
 import {
-  toDay,
+  toLocalDateStr,
   todayInTZ,
   tomorrowInTZ,
   startOfDayInTZ,
@@ -29,10 +29,11 @@ function computeStreaks(
     return { currentStreak: 0, longestStreak: 0, lastCompletedDate: null };
   }
 
-  // Deduplicate to one entry per calendar day
+  // Deduplicate to one entry per LOCAL calendar day in the user's timezone
+  // (critical: toDay() uses UTC midnight which maps IST-midnight logs to the wrong UTC date)
   const days = [
     ...new Map(
-      dates.map((d) => [toDay(d).getTime(), toDay(d)])
+      dates.map((d) => [toLocalDateStr(d, tz), startOfDayInTZ(tz, d)])
     ).values(),
   ].sort((a, b) => a.getTime() - b.getTime());
 
@@ -319,25 +320,23 @@ export const getUserHabitAnalytics = async (req: AuthRequest, res: Response) => 
     const today = todayInTZ(tz);
     const thirtyDaysAgo = new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000);
 
-    const last30Logs = dates.filter((d) => toDay(d) >= thirtyDaysAgo).length;
+    const last30Logs = dates.filter((d) => d >= thirtyDaysAgo).length;
     const completionRateLast30 = Math.round((last30Logs / 30) * 100);
 
     // Completion rate — last 7 days
     const sevenDaysAgo = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
-    const last7Logs = dates.filter((d) => toDay(d) >= sevenDaysAgo).length;
+    const last7Logs = dates.filter((d) => d >= sevenDaysAgo).length;
     const completionRateLast7 = Math.round((last7Logs / 7) * 100);
 
-    // Check completed today
+    // Check completed today — compare raw stored dates against TZ-aware [today, tomorrow)
     const tomorrow = tomorrowInTZ(tz);
-    const completedToday = dates.some(
-      (d) => toDay(d) >= today && toDay(d) < tomorrow
-    );
+    const completedToday = dates.some((d) => d >= today && d < tomorrow);
 
     // Weekly breakdown — past 4 weeks (Mon–Sun)
     const weeklyBreakdown = buildWeeklyBreakdown(dates, 4, tz);
 
     // Monthly breakdown — past 6 months
-    const monthlyBreakdown = buildMonthlyBreakdown(dates, 6);
+    const monthlyBreakdown = buildMonthlyBreakdown(dates, 6, tz);
 
     res.json({
       habit: formatHabit(habit),
@@ -379,9 +378,7 @@ export const getUserHabitsSummary = async (req: AuthRequest, res: Response) => {
         const dates = allLogs.map((l) => l.dateCompleted);
         const { currentStreak, longestStreak, lastCompletedDate } = computeStreaks(dates, tz);
 
-        const completedToday = dates.some(
-          (d) => toDay(d) >= today && toDay(d) < tomorrow
-        );
+        const completedToday = dates.some((d) => d >= today && d < tomorrow);
 
         return {
           habit: formatHabit(habit),
@@ -425,19 +422,16 @@ function buildWeeklyBreakdown(dates: Date[], weeks: number, tz: string) {
   const today = todayInTZ(tz);
 
   for (let w = weeks - 1; w >= 0; w--) {
-    const weekStart = new Date(today);
-    weekStart.setUTCDate(today.getUTCDate() - today.getUTCDay() - w * 7); // Sunday start
-    const weekEnd = new Date(weekStart);
-    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
-    weekEnd.setTime(weekEnd.getTime() + 24 * 60 * 60 * 1000 - 1);
+    // weekStart = Sunday of `w` weeks ago, expressed as IST-midnight UTC timestamp
+    const weekStart = new Date(today.getTime() - (today.getUTCDay() + w * 7) * 24 * 60 * 60 * 1000);
+    const weekEnd   = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000); // exclusive
 
-    const completed = dates.filter(
-      (d) => toDay(d) >= weekStart && d <= weekEnd
-    ).length;
+    // Compare raw stored dates (IST-midnight UTC) directly — no toDay() needed
+    const completed = dates.filter((d) => d >= weekStart && d < weekEnd).length;
 
     result.push({
-      weekStart: weekStart.toISOString().split("T")[0],
-      weekEnd: weekEnd.toISOString().split("T")[0],
+      weekStart: toLocalDateStr(weekStart, tz),
+      weekEnd:   toLocalDateStr(new Date(weekEnd.getTime() - 1), tz),
       completed,
       total: 7,
     });
@@ -446,23 +440,28 @@ function buildWeeklyBreakdown(dates: Date[], weeks: number, tz: string) {
   return result;
 }
 
-function buildMonthlyBreakdown(dates: Date[], months: number) {
+function buildMonthlyBreakdown(dates: Date[], months: number, tz: string) {
   const result = [];
   const now = new Date();
+  const currentLocalDate = toLocalDateStr(now, tz); // "YYYY-MM-DD" in user's TZ
+  const [curYear, curMonth] = currentLocalDate.split("-").map(Number);
 
   for (let m = months - 1; m >= 0; m--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
-    const year = d.getFullYear();
-    const month = d.getMonth();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    let month = curMonth - m;
+    let year  = curYear;
+    if (month <= 0) { month += 12; year -= 1; }
 
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const monthStr    = `${year}-${String(month).padStart(2, "0")}`;
+
+    // Match logs whose LOCAL date (in user's TZ) falls in this year-month
     const completed = dates.filter((date) => {
-      const day = toDay(date);
-      return day.getFullYear() === year && day.getMonth() === month;
+      const local = toLocalDateStr(date, tz); // "YYYY-MM-DD"
+      return local.startsWith(monthStr);
     }).length;
 
     result.push({
-      month: `${year}-${String(month + 1).padStart(2, "0")}`,
+      month: monthStr,
       completed,
       total: daysInMonth,
       completionRate: Math.round((completed / daysInMonth) * 100),
