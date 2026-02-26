@@ -7,8 +7,8 @@ import { Request } from "express";
  */
 const keyGenerator = (req: Request): string => {
   const forwarded = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim();
-  if (forwarded) return forwarded;
-  return ipKeyGenerator(req); // handles IPv4-mapped IPv6 (::ffff:1.2.3.4) correctly
+  if (forwarded) return ipKeyGenerator(forwarded);
+  return ipKeyGenerator(req.ip ?? "unknown");
 };
 
 // Auth routes — prevent brute force & account spam
